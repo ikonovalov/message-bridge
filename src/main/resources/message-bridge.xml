@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:camel="http://camel.apache.org/schema/spring"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:p="http://www.springframework.org/schema/p"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation=
+               "http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd
+                http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+                http://camel.apache.org/schema/spring http://camel.apache.org/schema/spring/camel-spring.xsd">
+
+    <context:property-placeholder location="mb-setup.properties" ignore-resource-not-found="true"/>
+
+    <context:annotation-config/>
+
+    <context:component-scan base-package="ru.codeunited.messagebridge"/>
+
+    <!-- Custom exchange formatter. Name=logFormatter it's convention over configuration -->
+    <bean name="logFormatter" class="ru.codeunited.messagebridge.TransferExchangeFormatter" />
+
+    <!-- setup Rabbit MQ -->
+    <bean id="rabbitCF" class="com.rabbitmq.client.ConnectionFactory"
+          p:username="${rabbitmq.username}"
+          p:password="${rabbitmq.password}"
+          p:host="${rabbitmq.host}"
+          p:port="${rabbitmq.port}"
+          p:automaticRecoveryEnabled="true"/>
+
+
+    <!-- Setup WebSphere MQ -->
+    <bean id="mqClientConnectionFactory" class="com.ibm.mq.jms.MQConnectionFactory"
+          p:hostName="${wmq.qmgr.host}"
+          p:port="${wmq.qmgr.port}"
+          p:queueManager="${wmq.qmgr.name}"
+          p:transportType="1"
+          p:CCSID="${wmq.qmgr.ccid}"
+          p:channel="${wmq.qmgr.channel}">
+    </bean>
+
+    <bean id="jmsQueueConnectionFactorySecured"
+          class="org.springframework.jms.connection.UserCredentialsConnectionFactoryAdapter"
+          p:targetConnectionFactory-ref="mqClientConnectionFactory"
+          p:username="${wmq.qmgr.username}"
+          p:password="^_^">
+    </bean>
+
+    <bean id="jmsQueueCachingConnectionFactorySecured"
+          class="org.springframework.jms.connection.CachingConnectionFactory"
+          p:targetConnectionFactory-ref="jmsQueueConnectionFactorySecured">
+    </bean>
+
+    <bean id="wmq" class="org.apache.camel.component.jms.JmsComponent"
+          p:connectionFactory-ref="jmsQueueCachingConnectionFactorySecured"
+          p:includeSentJMSMessageID="true"/>
+
+    <!-- Routes -->
+    <camel:camelContext>
+        <camel:route id="rmq2wmq">
+            <camel:from
+                    uri="rabbitmq:/transit.fan?autoDelete=false&amp;exchangeType=fanout&amp;queue=java.camel.input&amp;connectionFactory=#rabbitCF&amp;autoAck=false&amp;concurrentConsumers=1"/>
+            <camel:onCompletion>
+                <camel:to uri="log:RMQ.BRIDGE.INPUT?additionalHeader=MySomeHeader"/>
+            </camel:onCompletion>
+            <camel:setHeader headerName="rabbitmq.REQUEUE">
+                <camel:constant>true</camel:constant>
+            </camel:setHeader>
+            <camel:to uri="wmq:queue:RMQ.BRIDGE.INPUT"/>
+        </camel:route>
+    </camel:camelContext>
+</beans>
